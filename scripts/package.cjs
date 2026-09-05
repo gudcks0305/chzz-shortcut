@@ -5,7 +5,8 @@ const files = ['manifest.json', 'core.js', 'content.js', 'popup.html', 'popup.cs
 const target = path.resolve('outputs/chzz-shortcut');
 fs.mkdirSync(target, { recursive: true });
 for (const file of files) fs.copyFileSync(file, path.join(target, file));
-const zip = path.resolve('outputs/chzz-shortcut-0.1.0.zip');
+const { version } = require('../package.json');
+const zip = path.resolve(`outputs/chzz-shortcut-${version}.zip`);
 fs.rmSync(zip, { force: true });
 execFileSync('zip', ['-q', zip, ...files], { cwd: target });
 console.log(`Unpacked: ${target}\nZIP: ${zip}`);

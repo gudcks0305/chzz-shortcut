@@ -8,9 +8,14 @@ const tick = (ms = 10) => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fixture(t, initial = {}, options = {}) {
   const dom = new JSDOM('<body><input id="search"><div id="aside-chatting"><div id="composer"><pre contenteditable="true"></pre><button id="toggle" aria-haspopup="true" aria-expanded="false">이모티콘</button></div><button id="send">채팅</button></div></body>', { url: 'https://chzzk.naver.com/live/test', runScripts: 'outside-only', pretendToBeVisual: true });
-  t.after(() => dom.window.close());
+  t.after(async () => {
+    dom.window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await tick(0);
+    dom.window.close();
+  });
   const w = dom.window, d = w.document, data = structuredClone(initial), listeners = [];
-  let inserted = 0, sent = 0, writes = 0;
+  let inserted = 0, sent = 0, writes = 0, lastEmoji = sample.emojiId;
+  const insertedIds = [];
   w.HTMLElement.prototype.getClientRects = function () { return this.isConnected && !this.hidden ? [{}] : []; };
   Object.defineProperty(w.HTMLElement.prototype, 'contentEditable', { get() { return this.getAttribute('contenteditable'); } });
   w.chrome = { storage: { local: {
@@ -29,9 +34,12 @@ async function fixture(t, initial = {}, options = {}) {
     const textarea = d.createElement('textarea'); textarea.className = '_input_19u4u_59';
     editor.replaceWith(textarea); editor = textarea;
   }
-  function renderEmoji(id = sample.emojiId) {
-    d.getElementById('emoji_area').innerHTML = `<li id="emoji_${id}"><button type="button">${options.locked ? '<i class="_lock_abc"></i>' : ''}<img alt="{:${id}:}" src="${sample.imageUrl}"></button></li>`;
-    d.querySelector('#emoji_area button').onclick = () => { inserted++; editor.append(d.createElement('img')); };
+  function renderEmoji(ids = options.nativeEmojis || [sample.emojiId]) {
+    if (!Array.isArray(ids)) ids = [ids];
+    d.getElementById('emoji_area').innerHTML = ids.map(id => `<li id="emoji_${id}"><button type="button">${options.locked ? '<i class="_lock_abc"></i>' : ''}<img alt="{:${id}:}" src="${sample.imageUrl}"></button></li>`).join('');
+    for (const [index, button] of Array.from(d.querySelectorAll('#emoji_area button')).entries()) button.onclick = () => {
+      inserted++; lastEmoji = ids[index]; insertedIds.push(lastEmoji); editor.append(d.createElement('img'));
+    };
   }
   d.getElementById('toggle').onclick = event => {
     const toggle = event.currentTarget;
@@ -42,16 +50,27 @@ async function fixture(t, initial = {}, options = {}) {
     if (toggle.getAttribute('aria-expanded') === 'true') { toggle.setAttribute('aria-expanded', 'false'); d.getElementById('picker')?.remove(); return; }
     toggle.setAttribute('aria-expanded', 'true');
     const picker = d.createElement('div'); picker.id = 'picker';
-    picker.innerHTML = `<button id="emoji_pack_id_basic" aria-current="${!options.recent}">기본</button><div id="emoji_area"></div>`;
-    d.body.append(picker); renderEmoji(options.otherPack ? 'other' : sample.emojiId);
-    let held = false;
-    d.getElementById('emoji_pack_id_basic').addEventListener('mousedown', event => { held = event.buttons === 1; });
-    d.getElementById('emoji_pack_id_basic').addEventListener('mouseup', () => {
-      if (!held) return;
-      held = false;
-      d.getElementById('emoji_pack_id_basic').setAttribute('aria-current', 'true');
-      w.setTimeout(() => renderEmoji(), options.renderDelay || 0);
-    });
+    picker.innerHTML = '<div id="emoji_area"></div>';
+    if (options.areaDelay) {
+      picker.firstElementChild.hidden = true;
+      w.setTimeout(() => { if (picker.isConnected) picker.firstElementChild.hidden = false; }, options.areaDelay);
+    }
+    d.body.append(picker);
+    const loadCatalog = () => {
+      if (!picker.isConnected) return;
+      const tab = d.createElement('button'); tab.id = 'emoji_pack_id_basic';
+      tab.setAttribute('aria-current', String(!options.recent)); tab.textContent = '기본'; picker.prepend(tab);
+      renderEmoji(options.recentOnly ? lastEmoji : options.otherPack ? 'other' : sample.emojiId);
+      let held = false;
+      tab.addEventListener('mousedown', event => { held = event.buttons === 1; });
+      tab.addEventListener('mouseup', () => {
+        if (!held) return;
+        held = false; tab.setAttribute('aria-current', 'true');
+        w.setTimeout(() => { if (picker.isConnected) renderEmoji(); }, options.renderDelay || 0);
+      });
+    };
+    if (options.packDelay) w.setTimeout(loadCatalog, options.packDelay);
+    else loadCatalog();
   };
   d.getElementById('send').onclick = () => { sent++; };
   w.eval(source); await tick();
@@ -60,7 +79,7 @@ async function fixture(t, initial = {}, options = {}) {
     const event = new w.KeyboardEvent('keydown', { key: '¡', code: 'Digit1', altKey: true, bubbles: true, cancelable: true, ...props });
     target.dispatchEvent(event); return event;
   };
-  return { w, d, root, get editor() { return editor; }, data, key, get inserted() { return inserted; }, get sent() { return sent; }, get writes() { return writes; } };
+  return { w, d, root, get editor() { return editor; }, data, key, insertedIds, get inserted() { return inserted; }, get sent() { return sent; }, get writes() { return writes; } };
 }
 const bound = { 'chzzShortcut.slot.1': sample };
 
@@ -149,4 +168,60 @@ test('idle textarea mounts settings and survives replacement by active pre durin
   assert.equal(f.data['chzzShortcut.slot.1'].emojiId, sample.emojiId);
   assert.equal(f.d.activeElement, f.editor);
   f.key(); await tick(80); assert.equal(f.inserted, 1); assert.equal(f.sent, 0);
+});
+test('reopening settings cancels registration and clears its warning immediately', async t => {
+  const f = await fixture(t, {}, { recent: true });
+  f.root.getElementById('launcher').click(); f.root.querySelector('[data-slot="1"]').click(); await tick();
+  f.d.querySelector('#emoji_area button').click();
+  assert.equal(f.root.getElementById('status').hidden, false);
+  f.root.getElementById('launcher').click();
+  assert.equal(f.root.getElementById('status').hidden, true);
+  f.d.querySelector('#emoji_area button').click(); await tick();
+  assert.equal(f.writes, 0); assert.equal(f.inserted, 1);
+});
+test('closing the native picker cancels pending registration and its toast', async t => {
+  const f = await fixture(t);
+  f.root.getElementById('launcher').click(); f.root.querySelector('[data-slot="1"]').click(); await tick();
+  f.d.getElementById('toggle').click(); await tick();
+  assert.equal(f.root.getElementById('status').hidden, true);
+  f.d.getElementById('toggle').click(); f.d.querySelector('#emoji_area button').click(); await tick();
+  assert.equal(f.writes, 0); assert.equal(f.inserted, 1);
+});
+test('toast close button cancels registration without saving or inserting', async t => {
+  const f = await fixture(t);
+  f.root.getElementById('launcher').click(); f.root.querySelector('[data-slot="1"]').click(); await tick();
+  f.root.getElementById('dismiss-status').click();
+  assert.equal(f.root.getElementById('status').hidden, true);
+  assert.equal(f.writes, 0); assert.equal(f.inserted, 0);
+  assert.equal(f.d.activeElement, f.editor);
+});
+test('recent-pack warning automatically hides after 4.5 seconds', async t => {
+  const f = await fixture(t, {}, { recent: true });
+  f.root.getElementById('launcher').click(); f.root.querySelector('[data-slot="1"]').click(); await tick();
+  f.d.querySelector('#emoji_area button').click();
+  assert.equal(f.root.getElementById('status').hidden, false);
+  await tick(4600);
+  assert.equal(f.root.getElementById('status').hidden, true);
+  assert.equal(f.writes, 0); assert.equal(f.inserted, 0);
+});
+test('alternating slots survive delayed catalogs every time the picker reopens', async t => {
+  const second = { ...sample, emojiId: 'wink-456', name: '윙크' };
+  const f = await fixture(t, { ...bound, 'chzzShortcut.slot.2': second }, {
+    packDelay: 80, recentOnly: true, nativeEmojis: [sample.emojiId, second.emojiId]
+  });
+  for (const n of [1, 2, 1, 2]) {
+    f.key({ code: `Digit${n}` }); await tick(200);
+    assert.equal(f.d.getElementById('toggle').getAttribute('aria-expanded'), 'false');
+  }
+  assert.deepEqual(f.insertedIds, [sample.emojiId, second.emojiId, sample.emojiId, second.emojiId]);
+  assert.equal(f.sent, 0);
+});
+test('closing a picker before its area appears cancels registration immediately', async t => {
+  const f = await fixture(t, {}, { areaDelay: 100 });
+  f.root.getElementById('launcher').click(); f.root.querySelector('[data-slot="1"]').click(); await tick();
+  f.d.getElementById('toggle').click(); await tick();
+  assert.equal(f.root.getElementById('status').hidden, true);
+  await tick(100);
+  assert.equal(f.root.getElementById('status').hidden, true);
+  assert.equal(f.writes, 0);
 });

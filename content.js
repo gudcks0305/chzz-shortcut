@@ -28,7 +28,8 @@
       img { width:32px; height:32px; object-fit:contain; } .empty { width:32px; text-align:center; color:#53685b; }
       .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
       .remove { color:#a6b6ad; background:transparent; border:0; padding:6px; }
-      #status { position:fixed; z-index:2147483647; right:18px; bottom:65px; max-width:min(390px,calc(100vw - 36px)); background:#233b2c; border:1px solid #5c916c; border-radius:10px; padding:11px 14px; box-shadow:0 6px 24px #0006; }
+      #status { position:fixed; z-index:2147483647; right:18px; bottom:65px; max-width:min(390px,calc(100vw - 36px)); background:#233b2c; border:1px solid #5c916c; border-radius:10px; padding:11px 14px; box-shadow:0 6px 24px #0006; display:flex; align-items:center; gap:10px; }
+      #dismiss-status { flex-shrink:0; border:0; background:transparent; padding:2px 5px; font-size:18px; }
     </style>
     <button id="launcher" type="button" title="이모티콘 단축키 설정" aria-label="이모티콘 단축키 설정" aria-expanded="false">⌨</button>
     <section id="panel" role="dialog" aria-label="이모티콘 단축키 설정" hidden>
@@ -38,13 +39,13 @@
       <div id="slots"></div>
       <p>1~9 키 및 숫자패드 지원 · 현재 브라우저에 저장<br>등록은 최근 목록 대신 해당 이모티콘 팩에서 해주세요.</p>
     </section>
-    <div id="status" role="status" aria-live="polite" hidden></div>`;
+    <div id="status" hidden><span id="status-message" role="status" aria-live="polite"></span><button id="dismiss-status" type="button" aria-label="안내 닫기 및 등록 취소">×</button></div>`;
   const $ = id => root.getElementById(id);
   const storage = chrome.storage.local;
 
   function notify(message, persistent = false) {
     clearTimeout(toastTimer);
-    $("status").textContent = message;
+    $("status-message").textContent = message;
     $("status").hidden = false;
     if (!persistent) toastTimer = setTimeout(() => { $("status").hidden = true; }, 4500);
   }
@@ -103,13 +104,13 @@
     return Array.from(document.querySelectorAll('#emoji_area li[id^="emoji_"] button img'))
       .find(img => img.alt === `{:${emojiId}:}`)?.closest("button");
   }
-  async function waitFor(find, valid = () => true) {
-    for (let n = 0; n < 40; n++) {
+  async function waitFor(find, valid = () => true, options = {}) {
+    for (let n = 0; n < (options.timeout ?? 2000) / 50; n++) {
       if (!valid()) throw new Error("작업이 취소됨. 채팅창에서 다시 시도하세요.");
       const result = find(); if (result) return result;
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    throw new Error("이모티콘을 찾지 못함. 해당 팩에서 단축키를 다시 등록하세요.");
+    throw new Error(options.message ?? "이모티콘을 찾지 못함. 해당 팩에서 단축키를 다시 등록하세요.");
   }
   async function openPicker(input, valid) {
     const toggle = toggleButton(input);
@@ -121,6 +122,8 @@
   }
   function cancelRecording(message) {
     recording = null; clearTimeout(recordingTimer);
+    clearTimeout(toastTimer);
+    $("status").hidden = true;
     if (message) notify(message);
   }
   async function startRecording(n) {
@@ -128,12 +131,15 @@
     cancelRecording();
     const input = document.querySelector(EDITOR);
     if (!visible(input)) { notify("로그인 후 채팅 입력창이 활성화된 상태에서 등록하세요."); return; }
-    const current = { slot: n, context: contextFor(input) };
+    const current = { slot: n, context: contextFor(input), pickerToggle: toggleButton(input) };
     recording = current;
     panel(false);
     notify(`${n}번 등록 중: 이모티콘 팩에서 원하는 이모티콘 클릭. Esc로 취소.`, true);
     recordingTimer = setTimeout(() => cancelRecording("등록 시간이 지나 취소됨. 다시 등록해주세요."), 60000);
-    try { await openPicker(input, () => recording === current && !!currentInput(current.context)); }
+    try {
+      const picker = await openPicker(input, () => recording === current && !!currentInput(current.context));
+      if (recording === current) current.pickerToggle = picker.toggle;
+    }
     catch (error) { if (recording === current) cancelRecording(error.message); }
   }
   function captureEmoji(event) {
@@ -143,13 +149,13 @@
     event.preventDefault(); event.stopImmediatePropagation();
     const { slot, context } = recording;
     if (!currentInput(context)) { cancelRecording("페이지가 바뀌어 등록 취소됨."); return; }
-    if (!available(button)) { notify("사용 가능한 이모티콘을 선택하세요. Esc로 취소.", true); return; }
+    if (!available(button)) { notify("사용 가능한 이모티콘을 선택하세요. Esc로 취소."); return; }
     const img = button.querySelector("img");
     const match = /^\{:([\w-]+):\}$/.exec(img?.alt || "");
     const pack = document.querySelector('button[id^="emoji_pack_id_"][aria-current="true"]');
-    if (!pack) { notify("최근 목록 대신 이모티콘 팩 탭을 먼저 선택하세요. Esc로 취소.", true); return; }
+    if (!pack) { notify("최근 목록 대신 이모티콘 팩 탭을 먼저 선택하세요. Esc로 취소."); return; }
     const entry = C.binding({ emojiId: match?.[1], packId: pack.id.slice("emoji_pack_id_".length), imageUrl: img?.src, name: `${pack.textContent.trim()} · ${match?.[1]}` });
-    if (!entry) { notify("이 이모티콘의 정보를 읽지 못함. 다른 이모티콘을 선택하세요.", true); return; }
+    if (!entry) { notify("이 이모티콘의 정보를 읽지 못함. 다른 이모티콘을 선택하세요."); return; }
     cancelRecording();
     storage.set({ [C.slotKey(slot)]: entry }).then(() => {
       slots[slot] = entry; render();
@@ -170,11 +176,19 @@
       picker = await openPicker(input, valid);
       let button = findEmoji(entry.emojiId);
       if (!button) {
-        const tab = document.getElementById(`emoji_pack_id_${entry.packId}`);
-        if (!tab) throw new Error("현재 사용할 수 없는 이모티콘 팩입니다. 구독 상태를 확인하거나 다시 등록하세요.");
-        // The category carousel handles pointer down/up, not a plain click.
-        for (const type of ["mousedown", "mouseup", "click"]) tab.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0, buttons: type === "mousedown" ? 1 : 0 }));
-        button = await waitFor(() => findEmoji(entry.emojiId), valid);
+        // CHZZK mounts #emoji_area before its asynchronous catalog request finishes.
+        const target = await waitFor(() => {
+          const button = findEmoji(entry.emojiId);
+          if (button) return { button };
+          const tab = document.getElementById(`emoji_pack_id_${entry.packId}`);
+          return tab ? { tab } : null;
+        }, valid, { timeout: 5000, message: "이모티콘 목록에서 등록한 팩을 찾지 못함. 잠시 후 다시 시도하거나 구독 상태를 확인하세요." });
+        button = target.button;
+        if (target.tab) {
+          // The category carousel handles pointer down/up, not a plain click.
+          for (const type of ["mousedown", "mouseup", "click"]) target.tab.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0, buttons: type === "mousedown" ? 1 : 0 }));
+          button = await waitFor(() => findEmoji(entry.emojiId), valid);
+        }
       }
       if (!valid()) return;
       if (!available(button)) throw new Error("잠겼거나 사용할 수 없는 이모티콘입니다. 구독 상태를 확인하세요.");
@@ -188,6 +202,7 @@
   function keydown(event) {
     if (event.key === "Escape") {
       if (recording) { event.preventDefault(); event.stopImmediatePropagation(); cancelRecording("등록 취소됨"); }
+      else if (!$("status").hidden) { clearTimeout(toastTimer); $("status").hidden = true; }
       if (!$("panel").hidden) { panel(false); $("launcher").focus(); }
       return;
     }
@@ -199,6 +214,7 @@
   }
   $("launcher").addEventListener("click", () => { cancelRecording(); panel($("panel").hidden); });
   $("close").addEventListener("click", () => { panel(false); $("launcher").focus(); });
+  $("dismiss-status").addEventListener("click", () => { cancelRecording(); editor?.focus(); });
   async function savePreferences() {
     const next = C.preferences({ enabled: $("enabled").checked, modifier: $("modifier").value });
     try { await storage.set({ [C.preferencesKey]: next }); settings = next; notify("설정 저장됨"); }
@@ -220,9 +236,10 @@
   }
   // Fast path avoids repeated queries while live chat messages stream in.
   new MutationObserver(() => {
+    if (recording?.pickerToggle && (!currentInput(recording.context) || recording.pickerToggle.getAttribute("aria-expanded") !== "true")) cancelRecording();
     if (host.isConnected && editor?.isConnected) return;
     if (!mountTimer) mountTimer = setTimeout(mount, 200);
-  }).observe(document.body, { childList: true, subtree: true });
+  }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes[C.preferencesKey]) settings = C.preferences(changes[C.preferencesKey].newValue);
