@@ -1,0 +1,11 @@
+{
+  "name": "chzz-shortcut",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "check": "node --check core.js && node --check content.js",
+    "package": "node scripts/package.cjs"
+  },
+  "devDependencies": { "jsdom": "^26.1.0" }
+}

@@ -1,0 +1,11 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const files = ['manifest.json', 'core.js', 'content.js', 'popup.html', 'popup.css', 'README.md'];
+const target = path.resolve('outputs/chzz-shortcut');
+fs.mkdirSync(target, { recursive: true });
+for (const file of files) fs.copyFileSync(file, path.join(target, file));
+const zip = path.resolve('outputs/chzz-shortcut-0.1.0.zip');
+fs.rmSync(zip, { force: true });
+execFileSync('zip', ['-q', zip, ...files], { cwd: target });
+console.log(`Unpacked: ${target}\nZIP: ${zip}`);
