@@ -3,92 +3,38 @@
   if (document.getElementById("chzz-shortcut")) return;
   const C = globalThis.ChzzShortcut;
   const EDITOR = '#aside-chatting pre[contenteditable="true"], #aside-chatting textarea[class*="_input_"]:not([disabled]):not([readonly])';
-  let settings = C.preferences(), slots = {}, ready = false, busy = false, recording = null;
-  let editor = null, recordingTimer, toastTimer, mountTimer, operation = 0;
+  let state = null, backupAvailable = false, ready = false, busy = false, recording = null;
+  let editor = null, recordingTimer, mountTimer, operation = 0, recordingEpoch = 0;
   const host = document.createElement("span");
   host.id = "chzz-shortcut";
   host.style.cssText = "display:inline-flex;flex-shrink:0;align-self:center";
-  const root = host.attachShadow({ mode: "open" });
-  root.innerHTML = `
-    <style>
-      :host { color-scheme:dark; font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#edf4ef; }
-      * { box-sizing:border-box; } [hidden] { display:none!important; }
-      button,select { font:inherit; color:inherit; } button { cursor:pointer; }
-      button { border:1px solid #36443c; background:#252e28; border-radius:8px; padding:6px 9px; }
-      button:hover { background:#35453b; } button:focus-visible,select:focus-visible { outline:2px solid #00e7a1; outline-offset:2px; }
-      button:disabled { opacity:.5; cursor:wait; }
-      #launcher { margin:0 6px; padding:3px 7px; color:#00e7a1; background:transparent; font-size:19px; }
-      #panel { position:fixed; z-index:2147483646; right:18px; bottom:104px; width:min(370px,calc(100vw - 24px)); max-height:calc(100vh - 130px); overflow:auto; background:#171d19; border:1px solid #3b5143; border-radius:16px; padding:18px; box-shadow:0 16px 60px #0009; }
-      header { display:flex; align-items:center; justify-content:space-between; } h2 { margin:0; font-size:18px; }
-      p { margin:10px 0 14px; color:#aabbb0; font-size:12px; } #close { border:0; background:none; font-size:20px; }
-      .preferences { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:14px; }
-      label { display:flex; gap:6px; align-items:center; } input { accent-color:#00e7a1; } select { background:#252e28; border:1px solid #36443c; border-radius:6px; padding:5px; }
-      .slot { display:flex; align-items:center; gap:8px; padding:8px 0; border-top:1px solid #2e3a32; }
-      kbd { flex-shrink:0; width:25px; height:27px; display:grid; place-items:center; background:#2b3930; border:1px solid #49624f; border-radius:6px; color:#83f3bd; }
-      img { width:32px; height:32px; object-fit:contain; } .empty { width:32px; text-align:center; color:#53685b; }
-      .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
-      .remove { color:#a6b6ad; background:transparent; border:0; padding:6px; }
-      #status { position:fixed; z-index:2147483647; right:18px; bottom:65px; max-width:min(390px,calc(100vw - 36px)); background:#233b2c; border:1px solid #5c916c; border-radius:10px; padding:11px 14px; box-shadow:0 6px 24px #0006; display:flex; align-items:center; gap:10px; }
-      #dismiss-status { flex-shrink:0; border:0; background:transparent; padding:2px 5px; font-size:18px; }
-    </style>
-    <button id="launcher" type="button" title="이모티콘 단축키 설정" aria-label="이모티콘 단축키 설정" aria-expanded="false">⌨</button>
-    <section id="panel" role="dialog" aria-label="이모티콘 단축키 설정" hidden>
-      <header><h2>이모티콘 단축키</h2><button id="close" type="button" aria-label="설정 닫기">×</button></header>
-      <p>슬롯 등록 → 이모티콘 팩 선택 → 이모티콘 클릭.<br>채팅창에서 숫자키 조합으로 삽입하고, Enter로 전송하세요.</p>
-      <div class="preferences"><label><input id="enabled" type="checkbox">사용</label><label>조합 <select id="modifier"><option value="alt">Alt / Option</option><option value="altShift">Alt / Option + Shift</option></select></label></div>
-      <div id="slots"></div>
-      <p>1~9 키 및 숫자패드 지원 · 현재 브라우저에 저장<br>등록은 최근 목록 대신 해당 이모티콘 팩에서 해주세요.</p>
-    </section>
-    <div id="status" hidden><span id="status-message" role="status" aria-live="polite"></span><button id="dismiss-status" type="button" aria-label="안내 닫기 및 등록 취소">×</button></div>`;
-  const $ = id => root.getElementById(id);
-  const storage = chrome.storage.local;
-
-  function notify(message, persistent = false) {
-    clearTimeout(toastTimer);
-    $("status-message").textContent = message;
-    $("status").hidden = false;
-    if (!persistent) toastTimer = setTimeout(() => { $("status").hidden = true; }, 4500);
-  }
-  function panel(open) {
-    $("panel").hidden = !open;
-    $("launcher").setAttribute("aria-expanded", String(open));
-    if (open) { render(); $("close").focus(); }
-  }
-  function render() {
-    $("enabled").checked = settings.enabled;
-    $("modifier").value = settings.modifier;
-    $("slots").replaceChildren();
-    for (let n = 1; n <= 9; n++) {
-      const entry = slots[n], row = document.createElement("div");
-      row.className = "slot";
-      const key = document.createElement("kbd"); key.textContent = n;
-      const preview = document.createElement(entry?.imageUrl ? "img" : "span");
-      if (entry?.imageUrl) { preview.src = entry.imageUrl; preview.alt = ""; preview.referrerPolicy = "no-referrer"; }
-      else { preview.className = "empty"; preview.textContent = "·"; }
-      const name = document.createElement("span"); name.className = "name";
-      name.textContent = entry?.name || "비어 있음"; name.title = entry?.emojiId || "";
-      const assign = document.createElement("button"); assign.type = "button";
-      assign.textContent = entry ? "변경" : "등록"; assign.dataset.slot = n;
-      assign.setAttribute("aria-label", `${n}번 ${entry ? "변경" : "등록"}`);
-      assign.disabled = !ready;
-      assign.addEventListener("click", () => startRecording(n));
-      row.append(key, preview, name, assign);
-      if (entry) {
-        const remove = document.createElement("button"); remove.type = "button"; remove.className = "remove";
-        remove.textContent = "×"; remove.setAttribute("aria-label", `${n}번 삭제`);
-        remove.addEventListener("click", async () => {
-          remove.disabled = true;
-          try { await storage.remove(C.slotKey(n)); delete slots[n]; render(); notify(`${n}번 단축키 삭제됨`); }
-          catch { notify("저장 실패. 확장 프로그램을 새로고침한 뒤 다시 시도하세요."); remove.disabled = false; }
-        });
-        row.append(remove);
-      }
-      $("slots").append(row);
+  const ui = globalThis.ChzzShortcutPanel.create(host, {
+    command,
+    register: startRecording,
+    cancel: () => cancelRecording(),
+    focusEditor: () => document.querySelector(EDITOR)?.focus(),
+    insert: async emoji => {
+      const input = document.querySelector(EDITOR);
+      if (!visible(input)) throw new Error("로그인 후 채팅 입력창을 확인하세요.");
+      if (busy) throw new Error("이모티콘을 넣는 중입니다. 잠시 후 다시 시도하세요.");
+      cancelRecording(); ui.setOpen(false); await insert(emoji, input);
     }
+  });
+  function acceptState(next, hasBackup = backupAvailable) {
+    const clean = C.validateState(next);
+    if (state && clean.revision < state.revision) return;
+    state = clean; backupAvailable = hasBackup; ready = true;
+    ui.render(state, backupAvailable);
+  }
+  async function command(type, payload = {}) {
+    const result = await chrome.runtime.sendMessage({ namespace: "chzz-shortcut", type, ...payload });
+    if (!result?.ok) throw new Error(result?.error || "확장 프로그램 연결이 끊겼습니다. 치지직 탭을 새로고침하세요.");
+    acceptState(result.state, result.backupAvailable);
+    return result;
   }
   function toggleButton(input = editor) {
     return Array.from(input?.parentElement?.querySelectorAll('button[aria-haspopup="true"][aria-expanded]') || [])
-      .find(b => /이모티콘|emoticon|emoji/i.test(`${b.getAttribute("aria-label") || ""} ${b.textContent}`));
+      .find(button => /이모티콘|emoticon|emoji/i.test(`${button.getAttribute("aria-label") || ""} ${button.textContent}`));
   }
   function visible(element) { return !!element && element.getClientRects().length > 0; }
   function contextFor(input) { return { container: input.parentElement, url: location.href }; }
@@ -121,73 +67,74 @@
     return { toggle, opened };
   }
   function cancelRecording(message) {
-    recording = null; clearTimeout(recordingTimer);
-    clearTimeout(toastTimer);
-    $("status").hidden = true;
-    if (message) notify(message);
+    recordingEpoch++;
+    recording = null; clearTimeout(recordingTimer); ui.hideStatus();
+    if (message) ui.notify(message);
   }
-  async function startRecording(n) {
+  async function startRecording(target) {
     if (!ready || busy) return;
     cancelRecording();
     const input = document.querySelector(EDITOR);
-    if (!visible(input)) { notify("로그인 후 채팅 입력창이 활성화된 상태에서 등록하세요."); return; }
-    const current = { slot: n, context: contextFor(input), pickerToggle: toggleButton(input) };
-    recording = current;
-    panel(false);
-    notify(`${n}번 등록 중: 이모티콘 팩에서 원하는 이모티콘 클릭. Esc로 취소.`, true);
+    if (!visible(input)) { ui.notify("로그인 후 채팅 입력창이 활성화된 상태에서 등록하세요."); return; }
+    const current = { target, context: contextFor(input), pickerToggle: toggleButton(input) };
+    recording = current; ui.setOpen(false);
+    const label = target.type === "favorite" ? "즐겨찾기" : `${target.slotId}번`;
+    ui.notify(`${label} 등록 중: 이모티콘 팩에서 원하는 이모티콘 클릭. Esc로 취소.`, true);
     recordingTimer = setTimeout(() => cancelRecording("등록 시간이 지나 취소됨. 다시 등록해주세요."), 60000);
     try {
       const picker = await openPicker(input, () => recording === current && !!currentInput(current.context));
       if (recording === current) current.pickerToggle = picker.toggle;
-    }
-    catch (error) { if (recording === current) cancelRecording(error.message); }
+    } catch (error) { if (recording === current) cancelRecording(error.message); }
   }
   function captureEmoji(event) {
     if (!recording || !(event.target instanceof Element)) return;
     const button = event.target.closest('#emoji_area li[id^="emoji_"] button');
     if (!button) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    const { slot, context } = recording;
+    const { target, context } = recording;
     if (!currentInput(context)) { cancelRecording("페이지가 바뀌어 등록 취소됨."); return; }
-    if (!available(button)) { notify("사용 가능한 이모티콘을 선택하세요. Esc로 취소."); return; }
+    if (!available(button)) { ui.notify("사용 가능한 이모티콘을 선택하세요. Esc로 취소."); return; }
     const img = button.querySelector("img");
     const match = /^\{:([\w-]+):\}$/.exec(img?.alt || "");
     const pack = document.querySelector('button[id^="emoji_pack_id_"][aria-current="true"]');
-    if (!pack) { notify("최근 목록 대신 이모티콘 팩 탭을 먼저 선택하세요. Esc로 취소."); return; }
-    const entry = C.binding({ emojiId: match?.[1], packId: pack.id.slice("emoji_pack_id_".length), imageUrl: img?.src, name: `${pack.textContent.trim()} · ${match?.[1]}` });
-    if (!entry) { notify("이 이모티콘의 정보를 읽지 못함. 다른 이모티콘을 선택하세요."); return; }
+    if (!pack) { ui.notify("최근 목록 대신 이모티콘 팩 탭을 먼저 선택하세요. Esc로 취소."); return; }
+    const emoji = C.binding({ emojiId: match?.[1], packId: pack.id.slice("emoji_pack_id_".length), imageUrl: img?.src, name: `${pack.textContent.trim()} · ${match?.[1]}` });
+    if (!emoji) { ui.notify("이 이모티콘의 정보를 읽지 못함. 다른 이모티콘을 선택하세요."); return; }
     cancelRecording();
-    storage.set({ [C.slotKey(slot)]: entry }).then(() => {
-      slots[slot] = entry; render();
-      notify(`${slot}번 등록됨. 채팅창에서 ${settings.modifier === "altShift" ? "Alt/Option+Shift" : "Alt/Option"}+${slot}`);
+    const saveEpoch = recordingEpoch;
+    const type = target.type === "favorite" ? "ADD_FAVORITE" : "SET_SLOT";
+    const payload = target.type === "favorite" ? { emoji } : { setId: target.setId, slotId: target.slotId, emoji };
+    command(type, payload).then(() => {
+      if (recordingEpoch !== saveEpoch) return;
+      const label = target.type === "favorite" ? "즐겨찾기" : `${target.slotId}번`;
+      ui.notify(`${label} 등록됨`);
       const input = currentInput(context);
       if (input) {
         const toggle = toggleButton(input); if (toggle?.getAttribute("aria-expanded") === "true") toggle.click();
         currentInput(context)?.focus();
       }
-    }).catch(() => notify("저장 실패. 페이지를 새로고침한 뒤 다시 등록하세요."));
+    }).catch(error => { if (recordingEpoch === saveEpoch) ui.notify(`저장 실패: ${error.message}`); });
   }
-  async function insert(entry, input) {
+  async function insert(emoji, input) {
     busy = true;
     const token = ++operation, context = contextFor(input);
     const valid = () => token === operation && !!currentInput(context);
-    let picker;
     try {
-      picker = await openPicker(input, valid);
-      let button = findEmoji(entry.emojiId);
+      const picker = await openPicker(input, valid);
+      let button = findEmoji(emoji.emojiId);
       if (!button) {
         // CHZZK mounts #emoji_area before its asynchronous catalog request finishes.
         const target = await waitFor(() => {
-          const button = findEmoji(entry.emojiId);
+          const button = findEmoji(emoji.emojiId);
           if (button) return { button };
-          const tab = document.getElementById(`emoji_pack_id_${entry.packId}`);
+          const tab = document.getElementById(`emoji_pack_id_${emoji.packId}`);
           return tab ? { tab } : null;
         }, valid, { timeout: 5000, message: "이모티콘 목록에서 등록한 팩을 찾지 못함. 잠시 후 다시 시도하거나 구독 상태를 확인하세요." });
         button = target.button;
         if (target.tab) {
           // The category carousel handles pointer down/up, not a plain click.
           for (const type of ["mousedown", "mouseup", "click"]) target.tab.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0, buttons: type === "mousedown" ? 1 : 0 }));
-          button = await waitFor(() => findEmoji(entry.emojiId), valid);
+          button = await waitFor(() => findEmoji(emoji.emojiId), valid);
         }
       }
       if (!valid()) return;
@@ -196,37 +143,39 @@
       button.click();
       if (picker.opened && picker.toggle.isConnected && picker.toggle.getAttribute("aria-expanded") === "true") picker.toggle.click();
       currentInput(context)?.focus();
-    } catch (error) { notify(error.message); }
+    } catch (error) { ui.notify(error.message); }
     finally { busy = false; }
   }
   function keydown(event) {
+    if (event.composedPath().includes(host)) return;
     if (event.key === "Escape") {
       if (recording) { event.preventDefault(); event.stopImmediatePropagation(); cancelRecording("등록 취소됨"); }
-      else if (!$("status").hidden) { clearTimeout(toastTimer); $("status").hidden = true; }
-      if (!$("panel").hidden) { panel(false); $("launcher").focus(); }
+      else ui.hideStatus();
+      if (ui.isOpen) { ui.setOpen(false); document.querySelector(EDITOR)?.focus(); }
+      if (busy) operation++;
       return;
     }
-    const n = C.shortcutSlot(event, settings);
     const target = event.target instanceof Element ? event.target.closest(EDITOR) : null;
-    if (!ready || recording || !n || !target || !visible(target) || !slots[n]) return;
+    if (!ready || recording || !state.enabled || !target || !visible(target)) return;
+    const set = state.sets.find(set => set.id === state.activeSetId);
+    const direction = ["previous", "next"].find(key => C.shortcutMatches(event, state.setShortcuts[key]));
+    if (direction) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      if (!event.repeat) {
+        const index = state.sets.indexOf(set), step = direction === "next" ? 1 : -1;
+        const next = state.sets[(index + step + state.sets.length) % state.sets.length];
+        command("SELECT_SET", { setId: next.id }).then(() => ui.notify(`세트: ${next.name}`)).catch(error => ui.notify(error.message));
+      }
+      return;
+    }
+    const slot = set.slots.find(slot => slot.emoji && C.shortcutMatches(event, slot.shortcut));
+    if (!slot) { if (busy && event.isTrusted) operation++; return; }
     event.preventDefault(); event.stopImmediatePropagation();
-    if (!busy && !event.repeat) void insert(slots[n], target);
+    if (!busy && !event.repeat) void insert(slot.emoji, target);
   }
-  $("launcher").addEventListener("click", () => { cancelRecording(); panel($("panel").hidden); });
-  $("close").addEventListener("click", () => { panel(false); $("launcher").focus(); });
-  $("dismiss-status").addEventListener("click", () => { cancelRecording(); editor?.focus(); });
-  async function savePreferences() {
-    const next = C.preferences({ enabled: $("enabled").checked, modifier: $("modifier").value });
-    try { await storage.set({ [C.preferencesKey]: next }); settings = next; notify("설정 저장됨"); }
-    catch { render(); notify("설정 저장 실패. 페이지를 새로고침하세요."); }
-  }
-  $("enabled").addEventListener("change", savePreferences);
-  $("modifier").addEventListener("change", savePreferences);
   document.addEventListener("click", captureEmoji, true);
   window.addEventListener("keydown", keydown, true);
   window.addEventListener("pointerdown", event => { if (busy && event.isTrusted) operation++; }, true);
-  window.addEventListener("keydown", event => { if (busy && event.isTrusted && !C.shortcutSlot(event, settings)) operation++; }, true);
-
   function mount() {
     mountTimer = null;
     const next = document.querySelector(EDITOR);
@@ -242,14 +191,12 @@
   }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-expanded"] });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
-    if (changes[C.preferencesKey]) settings = C.preferences(changes[C.preferencesKey].newValue);
-    for (let n = 1; n <= 9; n++) if (changes[C.slotKey(n)]) slots[n] = C.binding(changes[C.slotKey(n)].newValue);
-    if (!$("panel").hidden) render();
+    try {
+      if (changes[C.BACKUP_KEY]) backupAvailable = !!changes[C.BACKUP_KEY].newValue;
+      if (changes[C.STATE_KEY]?.newValue) acceptState(changes[C.STATE_KEY].newValue);
+      else if (changes[C.BACKUP_KEY] && state) ui.render(state, backupAvailable);
+    } catch (error) { ready = false; ui.notify(`설정을 읽지 못함: ${error.message}`); }
   });
-  storage.get([C.preferencesKey, ...Array.from({ length: 9 }, (_, i) => C.slotKey(i + 1))]).then(data => {
-    settings = C.preferences(data[C.preferencesKey]);
-    for (let n = 1; n <= 9; n++) slots[n] = C.binding(data[C.slotKey(n)]);
-    ready = true; render();
-  }).catch(() => notify("설정을 불러오지 못함. 확장 프로그램과 페이지를 새로고침하세요."));
   mount();
+  command("GET_STATE").catch(error => ui.notify(`설정을 불러오지 못함: ${error.message}`));
 })();

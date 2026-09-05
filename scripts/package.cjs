@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const files = ['manifest.json', 'core.js', 'content.js', 'popup.html', 'popup.css', 'README.md'];
+const files = ['manifest.json', 'core.js', 'background.js', 'panel.js', 'content.js', 'popup.html', 'popup.css', 'README.md'];
 const target = path.resolve('outputs/chzz-shortcut');
 fs.mkdirSync(target, { recursive: true });
 for (const file of files) fs.copyFileSync(file, path.join(target, file));

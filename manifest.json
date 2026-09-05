@@ -1,13 +1,29 @@
 {
   "manifest_version": 3,
   "name": "치지직 이모티콘 단축키",
-  "version": "0.1.1",
-  "description": "Alt/Option + 숫자로 등록한 치지직 이모티콘을 채팅 입력창에 넣습니다.",
-  "permissions": ["storage"],
-  "content_scripts": [{
-    "matches": ["https://chzzk.naver.com/*"],
-    "js": ["core.js", "content.js"],
-    "run_at": "document_idle"
-  }],
-  "action": { "default_popup": "popup.html", "default_title": "치지직 이모티콘 단축키" }
+  "version": "0.2.0",
+  "description": "치지직 이모티콘에 원하는 단축키를 지정하고, 즐겨찾기·세트·JSON 백업으로 관리합니다.",
+  "permissions": [
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chzzk.naver.com/*"
+      ],
+      "js": [
+        "core.js",
+        "panel.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "치지직 이모티콘 단축키"
+  }
 }
